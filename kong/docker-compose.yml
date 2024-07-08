@@ -1,0 +1,134 @@
+version: '3.9'
+
+volumes:
+  kong_data: {}
+
+networks:
+  kong-net:
+    external: true
+
+services:
+  kong-migrations:
+    image: "kong:2.3.2-alpine"
+    command: kong migrations bootstrap
+    depends_on:
+      - kongdb
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_DATABASE: kong
+      KONG_PG_HOST: kongdb
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+    networks:
+      - kong-net
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  kong-migrations-up:
+    image: "kong:2.3.2-alpine"
+    command: kong migrations up && kong migrations finish
+    depends_on:
+      - kongdb
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_DATABASE: kong
+      KONG_PG_HOST: kongdb
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+    networks:
+      - kong-net
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  kong:
+    image: "kong:2.3.2-alpine"
+    user: "kong"
+    depends_on:
+      - kongdb
+    environment:
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: '0.0.0.0:8001'
+      KONG_ADIM_GUI_URL: '0.0.0.0:8002'
+      KONG_CASSANDRA_CONTACT_POINTS: kongdb
+      KONG_DATABASE: postgres
+      KONG_PG_DATABASE: kong
+      KONG_PG_HOST: kongdb
+      KONG_PG_USER: kong
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_PG_PASSWORD: kong
+    
+    networks:
+      - kong-net
+    ports:
+      - "8000:8000/tcp" # rotas
+      - "127.0.0.1:8001:8001/tcp" # api-gateway
+      - "8002:8002"
+      - "8443:8443/tcp"
+      - "127.0.0.1:8444:8444/tcp"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+    
+  kongdb:
+    image: postgres:9.5
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: kong
+    
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+    stdin_open: true
+    tty: true
+    networks:
+      - kong-net
+    # volumes:
+    #   - kong_data:/var/lib/postgresql/data
+
+  konga-prepare:
+    container_name: konga-prepare
+    image: pantsel/konga:latest
+    command: "-c prepare -a postgres -u postgresql://kong:kong@kongdb:5432/konga_db"
+    networks:
+      - kong-net
+    restart: on-failure
+    depends_on:
+      - kongdb
+
+  konga:
+    container_name: konga
+    image: pantsel/konga:latest
+    restart: always
+    networks:
+      - kong-net
+    environment:
+      DB_ADAPTER: postgres
+      DB_HOST: kongdb
+      DB_USER: kong
+      DB_PASSWORD: kong
+      TOKEN_SECRET: ahfdjgjgf79JKLFHJKh978953kgdfjkl
+      DB_DATABASE: konga_db
+      NODE_ENV: production
+    depends_on:
+      - kongdb
+    ports:
+      - "1337:1337"
